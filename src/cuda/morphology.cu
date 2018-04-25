@@ -58,6 +58,15 @@ __host__ void ConvertHostToDevice(uint8_t *inHostSrc, uint32_t srcX, uint32_t sr
                             srcX * sizeof(uint8_t), srcY, cudaMemcpyHostToDevice));
 }
 
+
+/**
+  allocates memory in device and copies data from host memory to padded device memory.
+*/
+__host__ void ConvertHostToDevice(uint8_t *inHostSrc, uint32_t srcSize, uint8_t *&outDeviceDst) {
+  CudaSafeCall(cudaMalloc(&outDeviceDst, srcSize * sizeof(uint8_t)));
+  CudaSafeCall(cudaMemcpy(outDeviceDst, inHostSrc,  srcSize * sizeof(uint8_t), cudaMemcpyHostToDevice));
+}
+
 /**
   allocates memory in host and copies data from device memory to host memory.
 */
@@ -71,40 +80,34 @@ __host__ void ConvertDeviceToHost(uint8_t *inDeviceSrc, size_t &inSrcStep, uint3
   erosion of 2d image
 */
 void Erode(uint8_t* inSrc, uint32_t srcX, uint32_t srcY, uint8_t* inMask, uint8_t maskX, uint8_t maskY, uint32_t *&outDst) {
+
   size_t deviceSrcPitch;
   uint8_t* deviceSrc;
   ConvertHostToDevice(inSrc, srcX, srcY, deviceSrc, deviceSrcPitch);
-
-  size_t deviceMaskPitch;
-  uint8_t* deviceMask;
-  ConvertHostToDevice(inMask, maskX, maskY, deviceMask, deviceMaskPitch);
 
   NppiSize srcSize;
   srcSize.width = srcX;
   srcSize.height = srcY;
 
+  uint8_t* deviceMask;
+  uint32_t maskSize = maskX * maskY;
+  ConvertHostToDevice(inMask, maskSize, deviceMask);
+
   NppiSize maskSize;
   maskSize.width = maskX;
   maskSize.height = maskY;
 
+  // allocates memory for output
   size_t deviceDstPitch;
   uint8_t *deviceDst;
   CudaSafeCall(cudaMallocPitch(&deviceDst, &deviceDstPitch, srcX * sizeof(uint8_t), srcY));
-   nppiErode_8u_C1R(inSrc, deviceSrc, deviceDst, deviceDstPitch, srcSize, deviceMask
-  // 		const Npp8u *  	pMask,
-  // 		NppiSize  	oMaskSize,
-  // 		NppiPoint  	oAnchor
-  // 	)
 
-  // NppStatus nppiErode_8u_C1R 	( 	const Npp8u *  	pSrc,
-  // 		Npp32s  	nSrcStep,
-  // 		Npp8u *  	pDst,
-  // 		Npp32s  	nDstStep,
-  // 		NppiSize  	oSizeROI,
-  // 		const Npp8u *  	pMask,
-  // 		NppiSize  	oMaskSize,
-  // 		NppiPoint  	oAnchor
-  // 	)
+  NppiPoint maskCenter;
+  maskCenter.x = maskX / 2;
+  maskCenter.y = maskY / 2;
+
+  nppiErode_8u_C1R(inSrc, deviceSrcPitch, deviceDst, deviceDstPitch, srcSize, deviceMask, maskSize, maskCenter);
+ 
 }
 
 

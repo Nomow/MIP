@@ -4,4 +4,3 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -O2 -DNDEBUG -Wall -Wall -g -
 include_directories("${CMAKE_SOURCE_DIR}/include")
 
 add_subdirectory(src)
-add_subdirectory(include)

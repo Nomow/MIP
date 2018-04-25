@@ -1,14 +1,16 @@
-set(morph
+set(MORPHOLOGY
   morphology.cpp
-)
+  morphology.h
 
+)
 
 set(MAIN_INCLUDE
   main.cpp
 )
 
-set(CUDASRCS
-  morphologykernel.cu
+set(CUDA_MORPHOLOGY
+  cuda/morphology.cu
+  cuda/morphology.cuh
 )
 
 # CUDA
@@ -40,8 +42,6 @@ message(STATUS "    libraries: ${ITK_LIBRARIES}")
 message(STATUS "    include path: ${ITK_INCLUDE_DIRS}")
 endif(ITK_FOUND)
 
-find_package( OpenCV REQUIRED )
-
-set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -gencode arch=compute_60,code=sm_60)
-cuda_add_executable(main ${MAIN_INCLUDE} ${morph} ${CUDASRCS} OPTIONS -g -G)
-target_link_libraries(main sub::header_only  ${ITK_LIBRARIES} ${CUDA_LIBRARIES})
+set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -gencode arch=compute_60,code=sm_60, -lineinfo)
+cuda_add_executable(main ${MAIN_INCLUDE} ${MORPHOLOGY} ${CUDA_MORPHOLOGY} OPTIONS -g -G)
+target_link_libraries(main ${ITK_LIBRARIES} ${CUDA_LIBRARIES})

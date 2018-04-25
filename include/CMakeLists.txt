@@ -1,5 +1,0 @@
-add_library(header_only_files INTERFACE)
-target_link_libraries(header_only_files INTERFACE )
-add_library(sub::header_only ALIAS header_only_files)
-target_include_directories(header_only_files INTERFACE  ${CMAKE_CURRENT_SOURCE_DIR})
-message(STATUS "Current source directory: ${CMAKE_CURRENT_SOURCE_DIR}")

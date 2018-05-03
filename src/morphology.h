@@ -38,8 +38,8 @@ class Morphology {
 
    void Save(const itk::Image<uint8_t, 3>::Pointer &inSrc, std::string inName);
 
-   void TranslateImg(const itk::Image<uint8_t, 3>::Pointer &inSrc, uint32_t inX, uint32_t inY,
-                     uint32_t inZ, itk::Image<uint8_t, 3>::Pointer &outDst);
+   void TranslateImg(const itk::Image<uint8_t, 3>::Pointer &inSrc, int32_t inX, int32_t inY,
+                     int32_t inZ, itk::Image<uint8_t, 3>::Pointer &outDst);
 
    void CropVolImg(const itk::Image<uint8_t, 3>::Pointer &inSrc, itk::Size<3> inUpperBound,
                    itk::Size<3> inLowerBound, itk::Image<uint8_t, 3>::Pointer &outDst);

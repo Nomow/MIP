@@ -53,9 +53,15 @@ void Morphology::Erode3d(const itk::Image<uint8_t, 3>::Pointer &inSrc, itk::Flat
   // copies differenceset to device memory
   std::vector<int32_t*> deviceDifferenceSet(27);
   for (int i = 0; i < 27; ++i) {
+    std::cout << hostDifferenceSet[i].size() << std::endl;
     cudamorph3d::CopyFromHostToDeviceMemory(&hostDifferenceSet[i][0], hostDifferenceSet[i].size(), deviceDifferenceSet[i]);
   }
-
+  const int numStreams = 8;
+  cudaStream_t streams[numStreams];
+  for (int i = 0; i < numStreams; i++) {
+     cudaStreamCreate(&streams[i]);
+  }
+  int kernelCalls = 0;
   // 0 - not  processed pixels
   // 1 - foreground pixels
   // 2 - processed pixel
@@ -93,8 +99,19 @@ auto start = std::chrono::high_resolution_clock::now();
             uint32_t cx = pixelIndex[0] + kernelRadius[0] - 1;
             uint32_t cy = pixelIndex[1] + kernelRadius[1] - 1;
             uint32_t cz = pixelIndex[2] + kernelRadius[2] - 1;
+             std::cout << "INDEX: " << cx << " " << cy <<  " " << cz << std::endl;
+            //  cudamorph3d::PaintDifferenceSet(paddedDeviceSrc, cx, cy, cz, deviceDifferenceSet[13], hostDifferenceSet[13].size(), 0);
+            //
+            //  uint8_t * ptr;
+            //  cudamorph3d::CopyFromDeviceToHostMemory(paddedDeviceSrc, paddedSrcDims[0], paddedSrcDims[1], paddedSrcDims[2], ptr);
+            //  itk::Index<3> index = {0, 0, 0};
+            //  cudaDeviceSynchronize();
+            //  CopyDataFromBufferToImg(ptr, index, paddedSrcDims,paddedBorderSrc);
+            //
+            //  Save(paddedBorderSrc, "ffff" + std::to_string(x* y * z)+".mhd");
 
-             cudamorph3d::PaintDifferenceSet(paddedDeviceSrc, cx, cy, cz, deviceDifferenceSet[13], hostDifferenceSet[13].size());
+             std::cout << hostDifferenceSet[13].size() << std::endl;
+             ++kernelCalls;
              paddedBorderSrc->SetPixel(pixelIndex, 2); // full kernel
              indexQueue.push(pixelIndex);
              std::cout << "queue started" << std::endl;
@@ -102,21 +119,21 @@ auto start = std::chrono::high_resolution_clock::now();
              while(!indexQueue.empty()) {
                itk::Index<3> currIndex = indexQueue.front();
                indexQueue.pop();
-               for (auto nz = -1, iz = 0; nz < 2; ++nz, ++iz) {
-                 for (auto ny = -1, iy = 0; ny < 2; ++ny, ++iy) {
-                   for (auto nx = -1, ix = 0; nx < 2; ++nx, ++ix) {
+               for (auto nz = -1, iz = 2; nz < 2; ++nz, --iz) {
+                 for (auto ny = -1, iy = 2; ny < 2; ++ny, --iy) {
+                   for (auto nx = -1, ix = 2; nx < 2; ++nx, --ix) {
 
                      itk::Index<3> neighbPixelIndex = {currIndex[0] + nx, currIndex[1] + ny, currIndex[2] + nz};
                      uint8_t neighbPixelVal = paddedBorderSrc->GetPixel(neighbPixelIndex);
                      if (neighbPixelVal == 0) {
-                       bool isBorderPixel = false;
+                       bool isBorderPixel1 = false;
                        for (auto nnz = -1; nnz < 2; ++nnz) {
                          for (auto nny = -1; nny < 2; ++nny) {
                            for (auto nnx = -1; nnx < 2; ++nnx) {
                              itk::Index<3> nneighbPixelIndex = {neighbPixelIndex[0] + nnx, neighbPixelIndex[1] + nny, neighbPixelIndex[2] + nnz};
                              uint8_t nneighbPixelVal = paddedBorderSrc->GetPixel(nneighbPixelIndex);
                              if(nneighbPixelVal == 1) {
-                               isBorderPixel = true;
+                               isBorderPixel1 = true;
                                break;
                              }
                            }
@@ -124,13 +141,23 @@ auto start = std::chrono::high_resolution_clock::now();
                        }
 
 
-                       if(isBorderPixel) {
-                          int ind = iz * (3 * 3 ) + (iy * 3) + ix;
-                          uint32_t cx = neighbPixelIndex[0] + kernelRadius[0] - 1;
-                          uint32_t cy = neighbPixelIndex[1] + kernelRadius[1] - 1;
-                          uint32_t cz = neighbPixelIndex[2] + kernelRadius[2] - 1;
-                          cudamorph3d::PaintDifferenceSet(paddedDeviceSrc, cx, cy, cz, deviceDifferenceSet[ind], hostDifferenceSet[ind].size());
+                       if(isBorderPixel1) {
+                          int ind1 = iz * (3 * 3 ) + (iy * 3) + ix;
+                          uint32_t ccx = neighbPixelIndex[0] + kernelRadius[0] -1;
+                          uint32_t ccy = neighbPixelIndex[1] + kernelRadius[1] -1;
+                          uint32_t ccz = neighbPixelIndex[2] + kernelRadius[2] - 1;
+                          if(ccx < 16 || ccx > paddedSrcDims[0] - 16 ) {
+                            std::cout << "OOx" << std::endl;
+                          }
+                          if(ccy < 16 || ccy > paddedSrcDims[1] - 16 ) {
+                            std::cout << "OOy" << std::endl;
+                          }
 
+                          if(ccz < 16 || ccz > paddedSrcDims[2] - 16 ) {
+                            std::cout << "OOZ" << std::endl;
+                          }
+                          cudamorph3d::PaintDifferenceSet(paddedDeviceSrc, ccx, ccy, ccz, deviceDifferenceSet[ind1], hostDifferenceSet[ind1].size(), streams[kernelCalls % numStreams]);
+                          ++kernelCalls;
                           paddedBorderSrc->SetPixel(neighbPixelIndex, 2); // full kernel
                           indexQueue.push(neighbPixelIndex);
                        } else {
@@ -144,11 +171,17 @@ auto start = std::chrono::high_resolution_clock::now();
                    }
                  }
                }
-
-
-               //
              }
-             //Save(paddedBorderSrc, "njauva" + std::to_string(x*y*z) + ".mhd");
+
+              // uint8_t * ptr;
+              // cudamorph3d::CopyFromDeviceToHostMemory(paddedDeviceSrc, paddedSrcDims[0], paddedSrcDims[1], paddedSrcDims[2], ptr);
+              // itk::Index<3> index = {0, 0, 0};
+              // cudaDeviceSynchronize();
+              // CopyDataFromBufferToImg(ptr, index, paddedSrcDims,paddedBorderSrc);
+
+             //  Save(paddedBorderSrc, "ffff" + std::to_string(x* y * z)+".mhd");
+             //
+             // Save(paddedBorderSrc, "njauva" + std::to_string(x*y*z) + ".mhd");
           } else {
             paddedBorderSrc->SetPixel(pixelIndex, 5); // full kernel
           }
@@ -160,12 +193,15 @@ auto start = std::chrono::high_resolution_clock::now();
       }
     }
   }
+  Save(paddedBorderSrc, "runned.mhd");
+
   uint8_t * ptr;
   cudamorph3d::CopyFromDeviceToHostMemory(paddedDeviceSrc, paddedSrcDims[0], paddedSrcDims[1], paddedSrcDims[2], ptr);
   itk::Index<3> index = {0, 0, 0};
   cudaDeviceSynchronize();
 
   CopyDataFromBufferToImg(ptr, index, paddedSrcDims,paddedBorderSrc);
+  Save(paddedBorderSrc, "paddedBorderSrcbeforeCrop.mhd");
 
     CropVolImg(paddedBorderSrc, kernelRadius, kernelRadius, paddedBorderSrc);
 
@@ -318,8 +354,8 @@ void Morphology::Save(const itk::Image<uint8_t, 3>::Pointer &inSrc, std::string 
   writer->Write();
 }
 
-void Morphology::TranslateImg(const itk::Image<uint8_t, 3>::Pointer &inSrc, uint32_t inX, uint32_t inY,
-                              uint32_t inZ, itk::Image<uint8_t, 3>::Pointer &outDst) {
+void Morphology::TranslateImg(const itk::Image<uint8_t, 3>::Pointer &inSrc, int32_t inX, int32_t inY,
+                              int32_t inZ, itk::Image<uint8_t, 3>::Pointer &outDst) {
 
   typedef itk::TranslationTransform<double, 3> TranslationTransformType;
   typedef itk::Image<uint8_t, 3> ImageType;
@@ -395,11 +431,19 @@ void Morphology::GetDifferenceInEachDirection(itk::FlatStructuringElement<3> inK
       for (auto k = 2; k >= 0; --k) {
         ImageType::Pointer substractedImg;
         if(counter != 13) {
-          TranslateImg(kernelImg, k -1, j - 1, i - 1, tempVolImg);
+
+          TranslateImg(kernelImg, k - 1, j - 1, i - 1, tempVolImg);
           SubstractSameSizedImgs(kernelImg, tempVolImg, substractedImg);
+          if(counter == 2) {
+            Save(kernelImg, "kernelImg.mhd");
+            Save(tempVolImg, "tempVolImg.mhd");
+            Save(substractedImg, "substractedImg.mhd");
+
+          }
         } else {
           substractedImg = kernelImg;
         }
+        Save(substractedImg, "kerneldiff" + std::to_string(counter) + ".mhd");
         std::vector<int32_t> ConnectedComponent;
         GetComponentOffsetFromCenter(substractedImg, ConnectedComponent);
         outDifferenceSet[counter] = ConnectedComponent;
@@ -414,6 +458,9 @@ void Morphology::GetComponentOffsetFromCenter(const itk::Image<uint8_t, 3>::Poin
    itk::Size<3> center;
    GetCenter(size, center);
    outConnectedComponents.reserve(size[0] * size[1] * size[2] * 3);
+   std::cout << "========" << std::endl;
+   std::cout << "size: " << size[0] << " " << size[1] << " " << size[2] << " s: " <<  outConnectedComponents.size() << std::endl;
+
    for (auto z = 0; z  < size[2]; ++z) {
      for (auto y = 0; y < size[1]; ++y) {
        for (auto x = 0; x < size[0]; ++x) {
@@ -430,6 +477,8 @@ void Morphology::GetComponentOffsetFromCenter(const itk::Image<uint8_t, 3>::Poin
        }
      }
    }
+   std::cout << "size1: " << size[0] << " " << size[1] << " " << size[2] << " s: " <<  outConnectedComponents.size() << std::endl;
+
 }
 
 

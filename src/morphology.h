@@ -9,60 +9,55 @@
 class Morphology {
  public:
    Morphology();
+   void Erode3d(const itk::Image<uint8_t, 3>::Pointer &inSrc, itk::FlatStructuringElement<3> inKernel, itk::Image<uint8_t, 3>::Pointer &outDst);
 
-   void PaintObjectBorderOfVolImgWithKernelObject(const itk::Image<unsigned char, 3>::Pointer &inVolImg, itk::FlatStructuringElement<3> inKernel, itk::Image<unsigned char, 3>::Pointer &outVolImg);
-
-   void PaintObjectAndVolImgBorder(const itk::Image<unsigned char, 3>::Pointer &inVolImg, itk::Image<unsigned char, 3>::Pointer &outVolImg);
-
-   void CopyDataToImageFromBuffer(unsigned char *inVolImgData,
-                                              itk::Index<3> inStartIndex,
-                                              itk::Size<3> inVolImgDims,
-                                              itk::Image<unsigned char, 3>::Pointer &outVolImg);
-
-   void TranslateImage(const itk::Image<unsigned char, 3>::Pointer &inVolImg, int x, int y, int z, itk::Image<unsigned char, 3>::Pointer &outVolImg);
-
-   void gpuErode(const itk::Image<unsigned char, 3>::Pointer &inVolImg,
-                             itk::FlatStructuringElement<3> inKernel,
-                             itk::Image<unsigned char, 3>::Pointer &outVolImg);
-
-   void SubstractSameSizedImages(const itk::Image<unsigned char, 3>::Pointer &img1,
-                                                  const itk::Image<unsigned char, 3>::Pointer &img2,
-                                                  itk::Image<unsigned char, 3>::Pointer &out_vol_img);
-
-   void GetDifferenceInEachDirection(itk::FlatStructuringElement<3> inKernel);
+   void GetCenter(itk::Size<3> inDims, itk::Size<3> &outCenter);
 
    void GetOffsetFromCenter(itk::Size<3> inCenter, itk::Size<3> inPos, itk::Size<3> &outOffset );
 
-   void GetKernelimageConnectedComponents(const itk::Image<unsigned char, 3>::Pointer &inVolImg, std::vector<int> &outConnectedComponents);
+   void AddPaddingToImgRegion(const itk::Image<uint8_t, 3>::Pointer &inSrc,
+                        itk::Size<3> inLowerBound,
+                        itk::Size<3> inUpperBound,
+                        uint8_t inPaddingVal,
+                        itk::Image<uint8_t, 3>::Pointer &outDst);
 
-   void convertKernelToVolumetricImage(itk::FlatStructuringElement<3> inKernel, itk::Image<unsigned char, 3>::Pointer &outVolImg);
+  void AddPaddingToImg(const itk::Image<uint8_t, 3>::Pointer &inSrc,
+                                   itk::Size<3> inLowerBound,
+                                   itk::Size<3> inUpperBound,
+                                   uint8_t inPaddingVal,
+                                   itk::Image<uint8_t, 3>::Pointer &outDst);
 
-   void CropVolImg(const itk::Image<unsigned char, 3>::Pointer &inVolImg, itk::Size<3> inUpperBound, itk::Size<3> inLowerBound, itk::Image<unsigned char, 3>::Pointer &outVolImg);
+   void CopyDataFromBufferToImg(uint8_t *inSrc,
+                                itk::Index<3> inStartIndex,
+                                itk::Size<3> inDims,
+                                itk::Image<uint8_t, 3>::Pointer &outDst);
 
-   void GetSize(const itk::Image<unsigned char, 3>::Pointer &inVolImg, int outSize[3]);
+   void SubstractSameSizedImgs(const itk::Image<uint8_t, 3>::Pointer &inSrc1,
+                               const itk::Image<uint8_t, 3>::Pointer &inSrc2,
+                               itk::Image<uint8_t, 3>::Pointer &outDst);
 
-   void GetSize(const itk::FlatStructuringElement<3> &inKernel, int outSize[3]);
+   void Save(const itk::Image<uint8_t, 3>::Pointer &inSrc, std::string inName);
 
-   void GetRadius(const itk::FlatStructuringElement<3> &inKernel, int outSize[3]);
+   void TranslateImg(const itk::Image<uint8_t, 3>::Pointer &inSrc, uint32_t inX, uint32_t inY,
+                     uint32_t inZ, itk::Image<uint8_t, 3>::Pointer &outDst);
 
-   void AddPaddingToImage(const itk::Image<unsigned char, 3>::Pointer &inVolImg,
-                                      itk::Size<3> inLowerBound,
-                                      itk::Size<3> inUpperBound,
-                                      unsigned char inPaddingValue,
-                                      itk::Image<unsigned char, 3>::Pointer &outVolImg);
+   void CropVolImg(const itk::Image<uint8_t, 3>::Pointer &inSrc, itk::Size<3> inUpperBound,
+                   itk::Size<3> inLowerBound, itk::Image<uint8_t, 3>::Pointer &outDst);
 
+   void KernelToImg(itk::FlatStructuringElement<3> inKernel, itk::Image<uint8_t, 3>::Pointer &outDst);
+
+   void GetDifferenceInEachDirection(itk::FlatStructuringElement<3> inKernel, std::vector<std::vector<int32_t> > &outDifferenceSet);
+
+   void GetComponentOffsetFromCenter(const itk::Image<uint8_t, 3>::Pointer &inVolImg, std::vector<int32_t> &outConnectedComponents);
    void itkErode(const itk::Image<unsigned char, 3>::Pointer &inVolImg,
                                itk::FlatStructuringElement<3> inStructElem,
                                itk::Image<unsigned char, 3>::Pointer &outVolImg);
 
-   void GetCenter(itk::Size<3> inDims, itk::Size<3> &outCenter);
-
-
-
-
-
-
  private:
+   void PasteImgToImg(const itk::Image<uint8_t, 3>::Pointer &inSrc1,
+                      const itk::Image<uint8_t, 3>::Pointer &inSrc2,
+                      itk::Index<3> inStartIndex,
+                      itk::Image<uint8_t, 3>::Pointer &outDst);
 
 };
 

@@ -6,190 +6,194 @@
 #include <itkImageRegionIterator.h>
 #include "itkTranslationTransform.h"
 #include "itkResampleImageFilter.h"
-
-#include "cuda/morphology.cuh"
+#include "cuda/morphology2d.cuh"
+#include "cuda/morphology3d.cuh"
+#include <itkPasteImageFilter.h>
+#include <itkImageFileWriter.h>
+#include <itkImageFileReader.h>
+#include <itkMetaImageIO.h>
+#include <queue>
 #include "morphology.h"
 
-
+#include <chrono>  // for high_resolution_clock
 
 Morphology::Morphology() {}
 
-void Morphology::PaintObjectBorderOfVolImgWithKernelObject(const itk::Image<unsigned char, 3>::Pointer &inVolImg, itk::FlatStructuringElement<3> inKernel, itk::Image<unsigned char, 3>::Pointer &outVolImg) {
-  typedef itk::Image<unsigned char, 3> ImageType;
 
-  itk::Size<3> padBy = inKernel.GetRadius();
 
-  // pads image to fit structuring element
-  ImageType::Pointer paddedImg;
-  AddPaddingToImage(inVolImg, padBy, padBy, 1, paddedImg);
-  unsigned char *imgData = paddedImg->GetBufferPointer();
-  unsigned char *kernelData = reinterpret_cast<unsigned char *>(inKernel.Begin());
-  int imgDims[3];
-  GetSize(paddedImg, imgDims);
-  int kernelRadius[3];
-  GetRadius(inKernel, kernelRadius);
-
-  unsigned char *outData;
-  PaintObjectBorderOfVolImgWithKernelObjectKernel(imgData, imgDims, kernelData, kernelRadius, outData);
-  itk::Index<3> tempIndex = {0, 0, 0};
-  itk::Size<3> tempImgDims = paddedImg->GetLargestPossibleRegion().GetSize();
-  ImageType::Pointer paintedVolImg;
-  CopyDataToImageFromBuffer(outData, tempIndex, tempImgDims, paintedVolImg);
-  CropVolImg(paintedVolImg, padBy, padBy, outVolImg);
-}
-
-void Morphology::PaintObjectAndVolImgBorder(const itk::Image<unsigned char, 3>::Pointer &inVolImg, itk::Image<unsigned char, 3>::Pointer &outVolImg) {
-
-  typedef itk::FlatStructuringElement<3> FlatStructuringElementType;
-  typedef itk::Image<unsigned char, 3> ImageType;
-
-  const int radius = 1;
-  itk::Size<3> padBy;
-  padBy.Fill(radius);
-
-  // pads image to fit structuring element
-  ImageType::Pointer paddedImg;
-  AddPaddingToImage(inVolImg, padBy, padBy, 0, paddedImg);
-
-  FlatStructuringElementType::RadiusType kernelRegionRadius;
-  kernelRegionRadius.Fill(radius);
-  FlatStructuringElementType kernel = FlatStructuringElementType::Box(kernelRegionRadius);
-
-  // converts data for gpu kernel
-  unsigned char *imgData = paddedImg->GetBufferPointer();
-  unsigned char *kernelData = reinterpret_cast<unsigned char *>(kernel.Begin());
-  int imgDims[3];
-  GetSize(paddedImg, imgDims);
-  int kernelRadius[3];
-  GetRadius(kernel, kernelRadius);
-
-  unsigned char *borderData;
-  PaintObjectAndVolImgBorderKernel(imgData, imgDims, kernelData, kernelRadius, borderData);
-  itk::Index<3> tempIndex = {0, 0, 0};
-  itk::Size<3> tempImgDims = paddedImg->GetLargestPossibleRegion().GetSize();
-  ImageType::Pointer borderImg;
-  CopyDataToImageFromBuffer(borderData, tempIndex, tempImgDims, borderImg);
-  CropVolImg(borderImg, padBy, padBy, outVolImg);
-}
-
-void Morphology::CopyDataToImageFromBuffer(unsigned char *inVolImgData,
-                                           itk::Index<3> inStartIndex,
-                                           itk::Size<3> inVolImgDims,
-                                           itk::Image<unsigned char, 3>::Pointer &outVolImg) {
-
-  typedef itk::Image<unsigned char, 3> ImageType;
+void Morphology::Erode3d(const itk::Image<uint8_t, 3>::Pointer &inSrc, itk::FlatStructuringElement<3> inKernel, itk::Image<uint8_t, 3>::Pointer &outDst) {
+  typedef itk::Image<uint8_t, 3> ImageType;
   typedef ImageType::RegionType RegionType;
 
-  outVolImg = ImageType::New();
-  ImageType::RegionType region(inStartIndex, inVolImgDims);
-  outVolImg->SetRegions(region);
-  outVolImg->Allocate();
-  outVolImg->FillBuffer(0);
+  itk::Size<3> srcDims = inSrc->GetLargestPossibleRegion().GetSize();
+  // applies padding to src image for border detection
+  ImageType::Pointer paddedBorderSrc;
+  itk::Size<3> borderPad = {1, 1, 1};
+  uint8_t pval = 0;
+  AddPaddingToImg(inSrc, borderPad, borderPad, 1, paddedBorderSrc);
+  Save(paddedBorderSrc, "ppp.mhd");
+  itk::Size<3> paddedBorderSrcDims = paddedBorderSrc->GetLargestPossibleRegion().GetSize();
 
-  for (auto i = 0; i < inVolImgDims[2]; ++i) {
-    for (auto j = 0; j < inVolImgDims[1]; ++j) {
-      for (auto k = 0; k < inVolImgDims[0]; ++k) {
-        itk::Index<3> pixelIndex = {k, j, i};
-        outVolImg->SetPixel(pixelIndex, *(inVolImgData +  (i *( inVolImgDims[0] * inVolImgDims[1] ) + (j * inVolImgDims[0]) + k)));
-      }
-    }
+  // pads image by kernel radius
+  itk::Size<3> kernelRadius = inKernel.GetRadius();
+  ImageType::Pointer paddedByRadiusSrc;
+
+  AddPaddingToImg(inSrc, kernelRadius, kernelRadius, 1, paddedByRadiusSrc);
+  itk::Size<3> paddedSrcDims = paddedByRadiusSrc->GetLargestPossibleRegion().GetSize();
+  Save(paddedByRadiusSrc, "paddedByRadiusSrc.mhd");
+  // copies padded by radius image to device memory
+  uint8_t *paddedSrcPtr = paddedByRadiusSrc->GetBufferPointer();
+  cudaPitchedPtr paddedDeviceSrc;
+  cudamorph3d::CopyFromHostToDeviceMemory(paddedSrcPtr, paddedSrcDims[0], paddedSrcDims[1], paddedSrcDims[2], paddedDeviceSrc);
+
+  // gets difference set of kernel
+  std::vector<std::vector<int> > hostDifferenceSet;
+  GetDifferenceInEachDirection(inKernel, hostDifferenceSet);
+
+  // copies differenceset to device memory
+  std::vector<int32_t*> deviceDifferenceSet(27);
+  for (int i = 0; i < 27; ++i) {
+    cudamorph3d::CopyFromHostToDeviceMemory(&hostDifferenceSet[i][0], hostDifferenceSet[i].size(), deviceDifferenceSet[i]);
   }
-}
 
-void Morphology::TranslateImage(const itk::Image<unsigned char, 3>::Pointer &inVolImg, int x, int y, int z, itk::Image<unsigned char, 3>::Pointer &outVolImg) {
-  typedef itk::TranslationTransform<double, 3> TranslationTransformType;
-  typedef itk::Image<unsigned char, 3> ImageType;
+  // 0 - not  processed pixels
+  // 1 - foreground pixels
+  // 2 - processed pixel
+auto start = std::chrono::high_resolution_clock::now();
+  std::queue<itk::Index<3>> indexQueue;
+  // iterates over each pixel of an image in specified region
+  for (auto z = borderPad[2]; z < paddedBorderSrcDims[2] - borderPad[2]; ++z) {
+    for (auto y = borderPad[1]; y < paddedBorderSrcDims[1] - borderPad[1]; ++y) {
+      for (auto x = borderPad[0]; x < paddedBorderSrcDims[0] - borderPad[0]; ++x) {
 
-  typedef itk::ResampleImageFilter<ImageType, ImageType> ResampleImageFilterType;
+        // 0 pixel value means unprocessed pixel and check neighbors for foreground value
+        itk::Index<3> pixelIndex = {x, y, z};
+        //std::cout << pixelIndex << std::endl;
 
-  TranslationTransformType::Pointer transform = TranslationTransformType::New();
-  TranslationTransformType::OutputVectorType translation;
-  translation[0] = x;
-  translation[1] = y;
-  translation[2] = z;
-
-  transform->Translate(translation);
-
-  ResampleImageFilterType::Pointer resampleFilter = ResampleImageFilterType::New();
-  resampleFilter->SetTransform(transform.GetPointer());
-  resampleFilter->SetInput(inVolImg);
-  resampleFilter->SetSize(inVolImg->GetLargestPossibleRegion().GetSize());
-  resampleFilter->Update();
-  outVolImg = resampleFilter->GetOutput();
-}
-
-
-
-void Morphology::gpuErode(const itk::Image<unsigned char, 3>::Pointer &inVolImg,
-                          itk::FlatStructuringElement<3> inKernel,
-                          itk::Image<unsigned char, 3>::Pointer &outVolImg) {
-
-  // typedef itk::Image<unsigned char, 3> ImageType;
-  // ImageType::Pointer borderVolImg;
-  // PaintObjectAndVolImgBorder(inVolImg, borderVolImg);
-  // PaintObjectBorderOfVolImgWithKernelObject(borderVolImg, inKernel, outVolImg);
-  outVolImg = inVolImg;
-  GetDifferenceInEachDirection(inKernel);
-}
-
-void Morphology::SubstractSameSizedImages(const itk::Image<unsigned char, 3>::Pointer &img1,
-                                               const itk::Image<unsigned char, 3>::Pointer &img2,
-                                               itk::Image<unsigned char, 3>::Pointer &out_vol_img) {
-
-  typedef itk::Image<unsigned char, 3> ImageType;
-
-  itk::Size<3> dimensions1 = img1->GetLargestPossibleRegion().GetSize();
-  out_vol_img  = ImageType::New();
-
-    // fills image with min values
-    out_vol_img->SetRegions(dimensions1);
-    out_vol_img->Allocate();
-    out_vol_img->FillBuffer(0);
-
-    for (auto i = 0; i < dimensions1[2]; ++i) {
-      for (auto j = 0; j < dimensions1[1]; ++j) {
-        for (auto k = 0; k < dimensions1[0]; ++k) {
-          itk::Index<3> pixel_index = {k, j, i};
-
-          // assigns max value
-          if(img1->GetPixel(pixel_index) == 1 && img2->GetPixel(pixel_index) == 0) {
-            out_vol_img->SetPixel(pixel_index, 1);
+        uint8_t pixelVal = paddedBorderSrc->GetPixel(pixelIndex);
+        if (pixelVal == 0) {
+          bool isBorderPixel = false;
+          // iterates over neighbours to find a border pixel
+          for (auto nz = -1; nz < 2; ++nz) {
+            for (auto ny = -1; ny < 2; ++ny) {
+              for (auto nx = -1; nx < 2; ++nx) {
+                itk::Index<3> neighbPixelIndex = {x + nx, y + ny, z + nz};
+                uint8_t neighbPixelVal = paddedBorderSrc->GetPixel(neighbPixelIndex);
+                // if neighbour is foreground value then uses full kernel to erode image
+                if (neighbPixelVal == 1) {
+                  isBorderPixel = true;
+                  break;
+                }
+              }
+            }
           }
-        }
-      }
-    }
-}
 
-void Morphology::GetDifferenceInEachDirection(itk::FlatStructuringElement<3> inKernel) {
-  typedef itk::FlatStructuringElement<3> FlatStructuringElementType;
-  typedef itk::Image<unsigned char, 3> ImageType;
-  itk::Size<3> size = {3, 3, 3};
+          // finds all border pixels
+          if (isBorderPixel) {
+            uint32_t cx = pixelIndex[0] + kernelRadius[0] - 1;
+            uint32_t cy = pixelIndex[1] + kernelRadius[1] - 1;
+            uint32_t cz = pixelIndex[2] + kernelRadius[2] - 1;
 
-  ImageType::Pointer kernelVolImg;
-  convertKernelToVolumetricImage(inKernel, kernelVolImg);
-  ImageType::Pointer tempVolImg;
-  itk::Size<3> center;
-  int counter = 0;
-  std::vector<std::vector<int> > difference(27);
-  for (int i = 0; i < size[2]; ++i) {
-    for (int j = 0; j < size[1]; ++j) {
-      for (int k = 0; k < size[0]; ++k) {
-        ImageType::Pointer substractedImg;
-        if(counter != 13) {
-          TranslateImage(kernelVolImg, k -1, j - 1, i - 1, tempVolImg);
-          SubstractSameSizedImages(kernelVolImg, tempVolImg, substractedImg);
-        } else {
-          substractedImg = kernelVolImg;
+             cudamorph3d::PaintDifferenceSet(paddedDeviceSrc, cx, cy, cz, deviceDifferenceSet[13], hostDifferenceSet[13].size());
+             paddedBorderSrc->SetPixel(pixelIndex, 2); // full kernel
+             indexQueue.push(pixelIndex);
+             std::cout << "queue started" << std::endl;
+             std::cout << indexQueue.size() << std::endl;
+             while(!indexQueue.empty()) {
+               itk::Index<3> currIndex = indexQueue.front();
+               indexQueue.pop();
+               for (auto nz = -1, iz = 0; nz < 2; ++nz, ++iz) {
+                 for (auto ny = -1, iy = 0; ny < 2; ++ny, ++iy) {
+                   for (auto nx = -1, ix = 0; nx < 2; ++nx, ++ix) {
+
+                     itk::Index<3> neighbPixelIndex = {currIndex[0] + nx, currIndex[1] + ny, currIndex[2] + nz};
+                     uint8_t neighbPixelVal = paddedBorderSrc->GetPixel(neighbPixelIndex);
+                     if (neighbPixelVal == 0) {
+                       bool isBorderPixel = false;
+                       for (auto nnz = -1; nnz < 2; ++nnz) {
+                         for (auto nny = -1; nny < 2; ++nny) {
+                           for (auto nnx = -1; nnx < 2; ++nnx) {
+                             itk::Index<3> nneighbPixelIndex = {neighbPixelIndex[0] + nnx, neighbPixelIndex[1] + nny, neighbPixelIndex[2] + nnz};
+                             uint8_t nneighbPixelVal = paddedBorderSrc->GetPixel(nneighbPixelIndex);
+                             if(nneighbPixelVal == 1) {
+                               isBorderPixel = true;
+                               break;
+                             }
+                           }
+                         }
+                       }
+
+
+                       if(isBorderPixel) {
+                          int ind = iz * (3 * 3 ) + (iy * 3) + ix;
+                          uint32_t cx = neighbPixelIndex[0] + kernelRadius[0] - 1;
+                          uint32_t cy = neighbPixelIndex[1] + kernelRadius[1] - 1;
+                          uint32_t cz = neighbPixelIndex[2] + kernelRadius[2] - 1;
+                          cudamorph3d::PaintDifferenceSet(paddedDeviceSrc, cx, cy, cz, deviceDifferenceSet[ind], hostDifferenceSet[ind].size());
+
+                          paddedBorderSrc->SetPixel(neighbPixelIndex, 2); // full kernel
+                          indexQueue.push(neighbPixelIndex);
+                       } else {
+                         paddedBorderSrc->SetPixel(neighbPixelIndex, 5); // full kernel
+                       }
+
+
+                     }
+
+
+                   }
+                 }
+               }
+
+
+               //
+             }
+             //Save(paddedBorderSrc, "njauva" + std::to_string(x*y*z) + ".mhd");
+          } else {
+            paddedBorderSrc->SetPixel(pixelIndex, 5); // full kernel
+          }
+
+
+
+
         }
-        std::vector<int> ConnectedComponent;
-        GetKernelimageConnectedComponents(substractedImg, ConnectedComponent);
-        difference[counter] = ConnectedComponent;
-        ++counter;
       }
     }
   }
+  uint8_t * ptr;
+  cudamorph3d::CopyFromDeviceToHostMemory(paddedDeviceSrc, paddedSrcDims[0], paddedSrcDims[1], paddedSrcDims[2], ptr);
+  itk::Index<3> index = {0, 0, 0};
+  cudaDeviceSynchronize();
+
+  CopyDataFromBufferToImg(ptr, index, paddedSrcDims,paddedBorderSrc);
+
+    CropVolImg(paddedBorderSrc, kernelRadius, kernelRadius, paddedBorderSrc);
+
+
+
+auto finish = std::chrono::high_resolution_clock::now();
+std::chrono::duration<double> elapsed = finish - start;
+std::cout << "Elapsed time: " << elapsed.count() << " s\n";
+Save(paddedBorderSrc, "paddedBorderSrc555.mhd");
+
 }
 
+void Morphology::PasteImgToImg(const itk::Image<uint8_t, 3>::Pointer &inSrc1,
+                               const itk::Image<uint8_t, 3>::Pointer &inSrc2,
+                               itk::Index<3> inStartIndex,
+                               itk::Image<uint8_t, 3>::Pointer &outDst) {
+
+  typedef itk::Image<uint8_t, 3> ImageType;
+  typedef itk::PasteImageFilter <ImageType, ImageType> PasteImageFilterType;
+
+  PasteImageFilterType::Pointer pasteFilter = PasteImageFilterType::New();
+  pasteFilter->SetSourceImage(inSrc1);
+  pasteFilter->SetDestinationImage(inSrc2);
+  pasteFilter->SetSourceRegion(inSrc1->GetLargestPossibleRegion());
+  pasteFilter->SetDestinationIndex(inStartIndex);
+  pasteFilter->Update();
+  outDst = pasteFilter->GetOutput();
+}
 
 void Morphology::GetCenter(itk::Size<3> inDims, itk::Size<3> &outCenter) {
   for (int i = 0; i < 3; ++i) {
@@ -197,23 +201,224 @@ void Morphology::GetCenter(itk::Size<3> inDims, itk::Size<3> &outCenter) {
   }
 }
 
-
 void Morphology::GetOffsetFromCenter(itk::Size<3> inCenter, itk::Size<3> inPos, itk::Size<3> &outOffset ) {
   for(int i = 0; i < 3; ++i) {
       outOffset[i] = inPos[i] - inCenter[i];
   }
 }
 
-void Morphology::GetKernelimageConnectedComponents(const itk::Image<unsigned char, 3>::Pointer &inVolImg, std::vector<int> &outConnectedComponents) {
+void Morphology::AddPaddingToImg(const itk::Image<uint8_t, 3>::Pointer &inSrc,
+                                 itk::Size<3> inLowerBound,
+                                 itk::Size<3> inUpperBound,
+                                 uint8_t inPaddingVal,
+                                 itk::Image<uint8_t, 3>::Pointer &outDst) {
+
+  typedef itk::Image<uint8_t, 3> ImageType;
+  typedef ImageType::RegionType RegionType;
+
+  itk::Size<3> srcDims = inSrc->GetLargestPossibleRegion().GetSize();
+  ImageType::RegionType region;
+  ImageType::IndexType start;
+  start.Fill( 0 );
+  region.SetIndex(start);
+  ImageType::SizeType dims;
+  dims[0] = srcDims[0] + inLowerBound[0] + inUpperBound[0];
+  dims[1] = srcDims[1] + inLowerBound[1] + inUpperBound[1];
+  dims[2] = srcDims[2] + inLowerBound[2] + inUpperBound[2];
+  ImageType::Pointer padImg = ImageType::New();
+  padImg->SetRegions(dims);
+  padImg->Allocate();
+  padImg->FillBuffer(inPaddingVal);
+  itk::Index<3> startIndex = {inLowerBound[0], inLowerBound[1], inLowerBound[2]};
+  PasteImgToImg(inSrc, padImg, startIndex, outDst);
+
+}
+
+void Morphology::AddPaddingToImgRegion(const itk::Image<uint8_t, 3>::Pointer &inSrc,
+                                 itk::Size<3> inLowerBound,
+                                 itk::Size<3> inUpperBound,
+                                 uint8_t inPaddingVal,
+                                 itk::Image<uint8_t, 3>::Pointer &outDst) {
+
+  typedef itk::Image<uint8_t, 3> ImageType;
+  typedef itk::ConstantPadImageFilter<ImageType, ImageType> ConstantPadImageFilterType;
+
+  ConstantPadImageFilterType::Pointer padFilter = ConstantPadImageFilterType::New();
+  padFilter->SetInput(inSrc);
+  padFilter->SetPadLowerBound(inLowerBound);
+  padFilter->SetPadUpperBound(inUpperBound);
+  padFilter->SetConstant(inPaddingVal);
+  padFilter->Update();
+  outDst = padFilter->GetOutput();
+}
+
+void Morphology::CopyDataFromBufferToImg(uint8_t *inSrc,
+                                         itk::Index<3> inStartIndex,
+                                         itk::Size<3> inDims,
+                                         itk::Image<uint8_t, 3>::Pointer &outDst) {
+
+  typedef itk::Image<uint8_t, 3> ImageType;
+  typedef ImageType::RegionType RegionType;
+
+  // inits img
+  outDst = ImageType::New();
+  ImageType::RegionType region(inStartIndex, inDims);
+  outDst->SetRegions(region);
+  outDst->Allocate();
+  outDst->FillBuffer(0);
+
+  // copies data from buffer to image
+  for (auto i = 0; i < inDims[2]; ++i) {
+    for (auto j = 0; j < inDims[1]; ++j) {
+      for (auto k = 0; k < inDims[0]; ++k) {
+        itk::Index<3> pixelIndex = {k, j, i};
+        outDst->SetPixel(pixelIndex, *(inSrc +  (i *( inDims[0] * inDims[1] ) + (j * inDims[0]) + k)));
+      }
+    }
+  }
+}
+
+void Morphology::SubstractSameSizedImgs(const itk::Image<uint8_t, 3>::Pointer &inSrc1,
+                                        const itk::Image<uint8_t, 3>::Pointer &inSrc2,
+                                        itk::Image<uint8_t, 3>::Pointer &outDst) {
+
+  typedef itk::Image<uint8_t, 3> ImageType;
+
+  itk::Size<3> dimensions1 = inSrc1->GetLargestPossibleRegion().GetSize();
+
+  // inits image
+  outDst  = ImageType::New();
+  outDst->SetRegions(dimensions1);
+  outDst->Allocate();
+  outDst->FillBuffer(0);
+
+  // substracts pixels
+  for (auto i = 0; i < dimensions1[2]; ++i) {
+    for (auto j = 0; j < dimensions1[1]; ++j) {
+      for (auto k = 0; k < dimensions1[0]; ++k) {
+        itk::Index<3> pixel_index = {k, j, i};
+        if(inSrc1->GetPixel(pixel_index) == 1 && inSrc2->GetPixel(pixel_index) == 0) {
+          outDst->SetPixel(pixel_index, 1);
+        }
+      }
+    }
+  }
+}
+
+void Morphology::Save(const itk::Image<uint8_t, 3>::Pointer &inSrc, std::string inName) {
+
+  typedef  itk::ImageFileWriter<itk::Image<uint8_t, 3>> VolumeWriterType;
+  typename VolumeWriterType::Pointer writer = VolumeWriterType::New();
+
+  itk::MetaImageIO::Pointer metaWriter = itk::MetaImageIO::New();
+  writer->SetImageIO(metaWriter);
+  metaWriter->SetDataFileName("LOCAL");
+  writer->SetFileName(inName);
+  writer->SetInput(inSrc);
+  writer->Write();
+}
+
+void Morphology::TranslateImg(const itk::Image<uint8_t, 3>::Pointer &inSrc, uint32_t inX, uint32_t inY,
+                              uint32_t inZ, itk::Image<uint8_t, 3>::Pointer &outDst) {
+
+  typedef itk::TranslationTransform<double, 3> TranslationTransformType;
+  typedef itk::Image<uint8_t, 3> ImageType;
+  typedef itk::ResampleImageFilter<ImageType, ImageType> ResampleImageFilterType;
+
+  // inits translation vector
+  TranslationTransformType::Pointer transform = TranslationTransformType::New();
+  TranslationTransformType::OutputVectorType translation;
+  translation[0] = inX;
+  translation[1] = inY;
+  translation[2] = inZ;
+  transform->Translate(translation);
+
+  // resmaples image
+  ResampleImageFilterType::Pointer resampleFilter = ResampleImageFilterType::New();
+  resampleFilter->SetTransform(transform.GetPointer());
+  resampleFilter->SetInput(inSrc);
+  resampleFilter->SetSize(inSrc->GetLargestPossibleRegion().GetSize());
+  resampleFilter->Update();
+  outDst = resampleFilter->GetOutput();
+}
+
+void Morphology::CropVolImg(const itk::Image<uint8_t, 3>::Pointer &inSrc, itk::Size<3> inUpperBound,
+                            itk::Size<3> inLowerBound, itk::Image<uint8_t, 3>::Pointer &outDst) {
+
+  typedef itk::Image<uint8_t, 3> ImageType;
+  typedef itk::CropImageFilter <ImageType, ImageType> CropImageFilterType;
+
+  CropImageFilterType::Pointer cropFilter = CropImageFilterType::New();
+  cropFilter->SetInput(inSrc);
+  cropFilter->SetUpperBoundaryCropSize(inUpperBound);
+  cropFilter->SetLowerBoundaryCropSize(inLowerBound);
+  cropFilter->Update();
+  outDst = cropFilter->GetOutput();
+}
+
+void Morphology::KernelToImg(itk::FlatStructuringElement<3> inKernel, itk::Image<uint8_t, 3>::Pointer &outDst) {
+
+  typedef itk::Image<uint8_t, 3> ImageType;
+  typedef itk::FlatStructuringElement<3> FlatStructuringElementType;
+
+  // inits img
+  outDst = ImageType::New();
+  outDst->SetRegions(inKernel.GetSize());
+  outDst->Allocate();
+
+  // iterates over img and copies kernel data
+  itk::ImageRegionIterator<ImageType> kernelImageIt;
+  kernelImageIt = itk::ImageRegionIterator<ImageType>(outDst, outDst->GetRequestedRegion() );
+  FlatStructuringElementType::ConstIterator kernelIt = inKernel.Begin();
+
+  while (!kernelImageIt.IsAtEnd())  {
+     kernelImageIt.Set(*kernelIt ? 1 : 0);
+     ++kernelImageIt;
+     ++kernelIt;
+  }
+}
+
+void Morphology::GetDifferenceInEachDirection(itk::FlatStructuringElement<3> inKernel, std::vector<std::vector<int32_t> > &outDifferenceSet) {
+
+  typedef itk::FlatStructuringElement<3> FlatStructuringElementType;
+  typedef itk::Image<uint8_t, 3> ImageType;
+
+  itk::Size<3> size = {3, 3, 3};
+  ImageType::Pointer kernelImg;
+  KernelToImg(inKernel, kernelImg);
+  ImageType::Pointer tempVolImg;
+  itk::Size<3> center;
+  int32_t counter = 0;
+  outDifferenceSet.resize(27);
+  for (auto i = 2; i >= 0; --i) {
+    for (auto j = 2; j >= 0; --j) {
+      for (auto k = 2; k >= 0; --k) {
+        ImageType::Pointer substractedImg;
+        if(counter != 13) {
+          TranslateImg(kernelImg, k -1, j - 1, i - 1, tempVolImg);
+          SubstractSameSizedImgs(kernelImg, tempVolImg, substractedImg);
+        } else {
+          substractedImg = kernelImg;
+        }
+        std::vector<int32_t> ConnectedComponent;
+        GetComponentOffsetFromCenter(substractedImg, ConnectedComponent);
+        outDifferenceSet[counter] = ConnectedComponent;
+        ++counter;
+      }
+    }
+  }
+}
+
+void Morphology::GetComponentOffsetFromCenter(const itk::Image<uint8_t, 3>::Pointer &inVolImg, std::vector<int32_t> &outConnectedComponents) {
    itk::Size<3> size = inVolImg->GetLargestPossibleRegion().GetSize();
    itk::Size<3> center;
    GetCenter(size, center);
    outConnectedComponents.reserve(size[0] * size[1] * size[2] * 3);
-   for (int z = 0; z  < size[2]; ++z) {
-     for (int y = 0; y < size[1]; ++y) {
-       for (int x = 0; x < size[0]; ++x) {
+   for (auto z = 0; z  < size[2]; ++z) {
+     for (auto y = 0; y < size[1]; ++y) {
+       for (auto x = 0; x < size[0]; ++x) {
           itk::Index<3> pixelIndex = {z, y, x};
-          unsigned char pixel = inVolImg->GetPixel(pixelIndex);
+          uint8_t pixel = inVolImg->GetPixel(pixelIndex);
           if (pixel == 1) {
             itk::Size<3> pos = {x, y, z};
             itk::Size<3> offset;
@@ -227,76 +432,8 @@ void Morphology::GetKernelimageConnectedComponents(const itk::Image<unsigned cha
    }
 }
 
-void Morphology::convertKernelToVolumetricImage(itk::FlatStructuringElement<3> inKernel, itk::Image<unsigned char, 3>::Pointer &outVolImg) {
-  typedef itk::Image<unsigned char, 3> ImageType;
-  typedef itk::FlatStructuringElement<3> FlatStructuringElementType;
-
-  outVolImg = ImageType::New();
-  outVolImg->SetRegions(inKernel.GetSize());
-  outVolImg->Allocate();
-
-  itk::ImageRegionIterator<ImageType> kernelImageIt;
-  kernelImageIt = itk::ImageRegionIterator<ImageType>(outVolImg, outVolImg->GetRequestedRegion() );
-  FlatStructuringElementType::ConstIterator kernelIt = inKernel.Begin();
-
-   while (!kernelImageIt.IsAtEnd())  {
-     kernelImageIt.Set(*kernelIt ? true : false);
-     ++kernelImageIt;
-     ++kernelIt;
-   }
-}
 
 
-void Morphology::CropVolImg(const itk::Image<unsigned char, 3>::Pointer &inVolImg, itk::Size<3> inUpperBound, itk::Size<3> inLowerBound, itk::Image<unsigned char, 3>::Pointer &outVolImg) {
-  typedef itk::Image<unsigned char, 3> ImageType;
-  typedef itk::CropImageFilter <ImageType, ImageType> CropImageFilterType;
-  CropImageFilterType::Pointer cropFilter = CropImageFilterType::New();
-  cropFilter->SetInput(inVolImg);
-  cropFilter->SetUpperBoundaryCropSize(inUpperBound);
-  cropFilter->SetLowerBoundaryCropSize(inLowerBound);
-  cropFilter->Update();
-  outVolImg = cropFilter->GetOutput();
-}
-
-void Morphology::GetSize(const itk::Image<unsigned char, 3>::Pointer &inVolImg, int outSize[3]) {
-  itk::Size<3> dims = inVolImg->GetLargestPossibleRegion().GetSize();
-  outSize[0] = dims[0];
-  outSize[1] = dims[1];
-  outSize[2] = dims[2];
-}
-
-void Morphology::GetSize(const itk::FlatStructuringElement<3> &inKernel, int outSize[3]) {
-  itk::Size<3> dims = inKernel.GetSize();
-  outSize[0] = dims[0];
-  outSize[1] = dims[1];
-  outSize[2] = dims[2];
-}
-
-
-void Morphology::GetRadius(const itk::FlatStructuringElement<3> &inKernel, int outSize[3]) {
-  itk::Size<3> dims = inKernel.GetRadius();
-  outSize[0] = dims[0];
-  outSize[1] = dims[1];
-  outSize[2] = dims[2];
-}
-
-void Morphology::AddPaddingToImage(const itk::Image<unsigned char, 3>::Pointer &inVolImg,
-                                   itk::Size<3> inLowerBound,
-                                   itk::Size<3> inUpperBound,
-                                   unsigned char inPaddingValue,
-                                   itk::Image<unsigned char, 3>::Pointer &outVolImg) {
-
-  typedef itk::Image<unsigned char, 3> ImageType;
-  typedef itk::ConstantPadImageFilter<ImageType, ImageType> ConstantPadImageFilterType;
-
-  ConstantPadImageFilterType::Pointer padFilter = ConstantPadImageFilterType::New();
-  padFilter->SetInput(inVolImg);
-  padFilter->SetPadLowerBound(inLowerBound);
-  padFilter->SetPadUpperBound(inUpperBound);
-  padFilter->SetConstant(inPaddingValue);
-  padFilter->Update();
-  outVolImg = padFilter->GetOutput();
-}
 
 
 void Morphology::itkErode(const itk::Image<unsigned char, 3>::Pointer &inVolImg,

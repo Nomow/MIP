@@ -9,11 +9,14 @@ set(MAIN_INCLUDE
 )
 
 set(CUDA_MORPHOLOGY
-  cuda/morphology.cu
-  cuda/morphology.cuh
+  cuda/morphology2d.cu
+  cuda/morphology2d.cuh
+  cuda/morphology3d.cu
+  cuda/morphology3d.cuh
 )
 
 # CUDA
+message(STATUS"NPP ${CUDA_nppi_LIBRARY}")
 find_package(CUDA 8.0 REQUIRED)
 if(CUDA_FOUND)
   include_directories(${CUDA_INCLUDE_DIRS})
@@ -44,4 +47,4 @@ endif(ITK_FOUND)
 
 set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -gencode arch=compute_60,code=sm_60, -lineinfo)
 cuda_add_executable(main ${MAIN_INCLUDE} ${MORPHOLOGY} ${CUDA_MORPHOLOGY} OPTIONS -g -G)
-target_link_libraries(main ${ITK_LIBRARIES} ${CUDA_LIBRARIES})
+target_link_libraries(main ${ITK_LIBRARIES} ${CUDA_LIBRARIES} ${CUDA_nppi_LIBRARY})

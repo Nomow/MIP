@@ -13,7 +13,7 @@ class Morphology {
 
    void GetCenter(itk::Size<3> inDims, itk::Size<3> &outCenter);
 
-   void GetOffsetFromCenter(itk::Size<3> inCenter, itk::Size<3> inPos, itk::Size<3> &outOffset );
+   void GetOffsetFromCenter(itk::Size<3> inCenter, itk::Size<3> inPos, int outOffset[3]);
 
    void AddPaddingToImgRegion(const itk::Image<uint8_t, 3>::Pointer &inSrc,
                         itk::Size<3> inLowerBound,

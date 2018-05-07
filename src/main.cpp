@@ -46,7 +46,7 @@ int main() {
   }
 
   StructuringElementType::RadiusType elementRadius;
-  elementRadius.Fill(50);
+  elementRadius.Fill(20);
   StructuringElementType structuringElement = StructuringElementType::Ball(elementRadius);
   Morphology m;
   m.Save(volImg, "volimg.mhd");

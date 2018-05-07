@@ -67,7 +67,7 @@ void Morphology::Erode3d(const itk::Image<uint8_t, 3>::Pointer &inSrc, itk::Flat
   // 2 - processed pixel
 auto start = std::chrono::high_resolution_clock::now();
   std::queue<itk::Index<3>> indexQueue;
-  // iterates over each pixel of an image in specified region
+    // iterates over each pixel of an image in specified region
   for (auto z = borderPad[2]; z < paddedBorderSrcDims[2] - borderPad[2]; ++z) {
     for (auto y = borderPad[1]; y < paddedBorderSrcDims[1] - borderPad[1]; ++y) {
       for (auto x = borderPad[0]; x < paddedBorderSrcDims[0] - borderPad[0]; ++x) {
@@ -99,8 +99,7 @@ auto start = std::chrono::high_resolution_clock::now();
             uint32_t cx = pixelIndex[0] + kernelRadius[0] - 1;
             uint32_t cy = pixelIndex[1] + kernelRadius[1] - 1;
             uint32_t cz = pixelIndex[2] + kernelRadius[2] - 1;
-             std::cout << "INDEX: " << cx << " " << cy <<  " " << cz << std::endl;
-            //  cudamorph3d::PaintDifferenceSet(paddedDeviceSrc, cx, cy, cz, deviceDifferenceSet[13], hostDifferenceSet[13].size(), 0);
+              cudamorph3d::PaintDifferenceSet(paddedDeviceSrc, cx, cy, cz, deviceDifferenceSet[13], hostDifferenceSet[13].size(), 0);
             //
             //  uint8_t * ptr;
             //  cudamorph3d::CopyFromDeviceToHostMemory(paddedDeviceSrc, paddedSrcDims[0], paddedSrcDims[1], paddedSrcDims[2], ptr);
@@ -146,16 +145,7 @@ auto start = std::chrono::high_resolution_clock::now();
                           uint32_t ccx = neighbPixelIndex[0] + kernelRadius[0] -1;
                           uint32_t ccy = neighbPixelIndex[1] + kernelRadius[1] -1;
                           uint32_t ccz = neighbPixelIndex[2] + kernelRadius[2] - 1;
-                          if(ccx < 16 || ccx > paddedSrcDims[0] - 16 ) {
-                            std::cout << "OOx" << std::endl;
-                          }
-                          if(ccy < 16 || ccy > paddedSrcDims[1] - 16 ) {
-                            std::cout << "OOy" << std::endl;
-                          }
 
-                          if(ccz < 16 || ccz > paddedSrcDims[2] - 16 ) {
-                            std::cout << "OOZ" << std::endl;
-                          }
                           cudamorph3d::PaintDifferenceSet(paddedDeviceSrc, ccx, ccy, ccz, deviceDifferenceSet[ind1], hostDifferenceSet[ind1].size(), streams[kernelCalls % numStreams]);
                           ++kernelCalls;
                           paddedBorderSrc->SetPixel(neighbPixelIndex, 2); // full kernel
@@ -173,15 +163,6 @@ auto start = std::chrono::high_resolution_clock::now();
                }
              }
 
-              // uint8_t * ptr;
-              // cudamorph3d::CopyFromDeviceToHostMemory(paddedDeviceSrc, paddedSrcDims[0], paddedSrcDims[1], paddedSrcDims[2], ptr);
-              // itk::Index<3> index = {0, 0, 0};
-              // cudaDeviceSynchronize();
-              // CopyDataFromBufferToImg(ptr, index, paddedSrcDims,paddedBorderSrc);
-
-             //  Save(paddedBorderSrc, "ffff" + std::to_string(x* y * z)+".mhd");
-             //
-             // Save(paddedBorderSrc, "njauva" + std::to_string(x*y*z) + ".mhd");
           } else {
             paddedBorderSrc->SetPixel(pixelIndex, 5); // full kernel
           }
@@ -237,9 +218,10 @@ void Morphology::GetCenter(itk::Size<3> inDims, itk::Size<3> &outCenter) {
   }
 }
 
-void Morphology::GetOffsetFromCenter(itk::Size<3> inCenter, itk::Size<3> inPos, itk::Size<3> &outOffset ) {
+void Morphology::GetOffsetFromCenter(itk::Size<3> inCenter, itk::Size<3> inPos, int32_t outOffset[3] ) {
   for(int i = 0; i < 3; ++i) {
-      outOffset[i] = inPos[i] - inCenter[i];
+      outOffset[i] = (int32_t) inCenter[i] - inPos[i];
+
   }
 }
 
@@ -464,11 +446,11 @@ void Morphology::GetComponentOffsetFromCenter(const itk::Image<uint8_t, 3>::Poin
    for (auto z = 0; z  < size[2]; ++z) {
      for (auto y = 0; y < size[1]; ++y) {
        for (auto x = 0; x < size[0]; ++x) {
-          itk::Index<3> pixelIndex = {z, y, x};
+          itk::Index<3> pixelIndex = {x, y, z};
           uint8_t pixel = inVolImg->GetPixel(pixelIndex);
           if (pixel == 1) {
             itk::Size<3> pos = {x, y, z};
-            itk::Size<3> offset;
+            int32_t offset[3];
             GetOffsetFromCenter(center , pos, offset);
             outConnectedComponents.push_back(offset[0]);
             outConnectedComponents.push_back(offset[1]);

@@ -65,7 +65,7 @@ void Morphology::Erode3d(const itk::Image<uint8_t, 3>::Pointer &inSrc, itk::Flat
   // 0 - not  processed pixels
   // 1 - foreground pixels
   // 2 - processed pixel
-auto start = std::chrono::high_resolution_clock::now();
+  auto start = std::chrono::high_resolution_clock::now();
   std::queue<itk::Index<3>> indexQueue;
     // iterates over each pixel of an image in specified region
   for (auto z = borderPad[2]; z < paddedBorderSrcDims[2] - borderPad[2]; ++z) {
@@ -408,9 +408,9 @@ void Morphology::GetDifferenceInEachDirection(itk::FlatStructuringElement<3> inK
   itk::Size<3> center;
   int32_t counter = 0;
   outDifferenceSet.resize(27);
-  for (auto i = 2; i >= 0; --i) {
-    for (auto j = 2; j >= 0; --j) {
-      for (auto k = 2; k >= 0; --k) {
+  for (auto i = 0; i < 3; ++i) {
+    for (auto j = 0; j < 3; ++j) {
+      for (auto k = 0; k < 3; ++k) {
         ImageType::Pointer substractedImg;
         if(counter != 13) {
 
@@ -425,7 +425,7 @@ void Morphology::GetDifferenceInEachDirection(itk::FlatStructuringElement<3> inK
         } else {
           substractedImg = kernelImg;
         }
-        Save(substractedImg, "kerneldiff" + std::to_string(counter) + ".mhd");
+        //Save(substractedImg, "kerneldiff" + std::to_string(counter) + ".mhd");
         std::vector<int32_t> ConnectedComponent;
         GetComponentOffsetFromCenter(substractedImg, ConnectedComponent);
         outDifferenceSet[counter] = ConnectedComponent;

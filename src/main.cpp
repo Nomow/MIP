@@ -28,7 +28,7 @@ int main() {
   }
 
   ImageType::Pointer volImg = ImageType::New();
-  itk::Size<3> size = { 250, 250, 250};
+  itk::Size<3> size = { 500, 500, 500};
   itk::Index<3> index = {0, 0, 0};
   ImageType::RegionType region(index, size);
   volImg->SetRegions(region);
@@ -37,7 +37,7 @@ int main() {
   for (auto i = 0; i < size[2]; ++i) {
     for (auto j = 0; j < size[1]; ++j) {
       for (auto k = 0; k < size[0]; ++k) {
-        if (i > 20 && i < 230 && j > 20 && j < 230 && k > 20 && k < 230) {
+        if (i > 20 && i < 500 && j > 20 && j < 500 && k > 20 && k < 500) {
           itk::Index<3> pixel_index = {i, j,k};
           volImg->SetPixel(pixel_index, 1);
         }
@@ -46,21 +46,23 @@ int main() {
   }
 
   StructuringElementType::RadiusType elementRadius;
-  elementRadius.Fill(20);
+  elementRadius.Fill(50);
   StructuringElementType structuringElement = StructuringElementType::Ball(elementRadius);
   Morphology m;
   m.Save(volImg, "volimg.mhd");
 
   ImageType::Pointer img1;
-  m.Erode3d(volImg, structuringElement, img1);
-  std::cout << "ITK ERODE:" << std::endl;
   auto start = std::chrono::high_resolution_clock::now();
-  m.itkErode(volImg, structuringElement, img1);
-
+  m.Erode3d(volImg, structuringElement, img1);
   auto finish = std::chrono::high_resolution_clock::now();
-
   std::chrono::duration<double> elapsed = finish - start;
+  std::cout << "Elapsed time erode3d: " << elapsed.count() << " s\n";
 
+  std::cout << "ITK ERODE:" << std::endl;
+  start = std::chrono::high_resolution_clock::now();
+  m.itkErode(volImg, structuringElement, img1);
+  finish = std::chrono::high_resolution_clock::now();
+  elapsed = finish - start;
   std::cout << "Elapsed time: " << elapsed.count() << " s\n";
 
   m.Save(img1, "itkerode.mhd");

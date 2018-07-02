@@ -2,7 +2,7 @@
 #include <cuda_profiler_api.h>
 #include <stdio.h>
 #include <cmath>
-#define kTrheadsPerDim 512
+#define kTrheadsPerDim 128
 #define kBlocksPerDim 65535
 /**
   cuda error checking helper methods for data copy between host and device and device and host and kernel error check.

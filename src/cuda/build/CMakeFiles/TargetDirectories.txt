@@ -1,0 +1,5 @@
+/home/janis/Documents/Alvils/morphology/MIP/build/CMakeFiles/rebuild_cache.dir
+/home/janis/Documents/Alvils/morphology/MIP/build/CMakeFiles/edit_cache.dir
+/home/janis/Documents/Alvils/morphology/MIP/build/src/CMakeFiles/rebuild_cache.dir
+/home/janis/Documents/Alvils/morphology/MIP/build/src/CMakeFiles/edit_cache.dir
+/home/janis/Documents/Alvils/morphology/MIP/build/src/CMakeFiles/main.dir

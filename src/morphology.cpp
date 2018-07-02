@@ -220,7 +220,7 @@ void Morphology::GetCenter(itk::Size<3> inDims, itk::Size<3> &outCenter) {
 
 void Morphology::GetOffsetFromCenter(itk::Size<3> inCenter, itk::Size<3> inPos, int32_t outOffset[3] ) {
   for(int i = 0; i < 3; ++i) {
-      outOffset[i] = (int32_t) inCenter[i] - inPos[i];
+      outOffset[i] = inCenter[i] - inPos[i];
 
   }
 }
